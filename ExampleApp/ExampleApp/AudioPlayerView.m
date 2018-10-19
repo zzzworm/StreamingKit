@@ -57,6 +57,9 @@
         
 		CGSize size = CGSizeMake(220, 50);
 		
+        urlField = [[UITextField alloc] initWithFrame:CGRectMake(10, frame.size.height * 0.05, size.width, size.height)];
+        
+        
 		playFromHTTPButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
 		playFromHTTPButton.frame = CGRectMake((frame.size.width - size.width) / 2, frame.size.height * 0.10, size.width, size.height);
 		[playFromHTTPButton addTarget:self action:@selector(playFromHTTPButtonTouched) forControlEvents:UIControlEventTouchUpInside];
@@ -98,10 +101,24 @@
 		[muteButton addTarget:self action:@selector(muteButtonPressed) forControlEvents:UIControlEventTouchUpInside];
 		[muteButton setTitle:@"Mute" forState:UIControlStateNormal];
 		
-		slider = [[UISlider alloc] initWithFrame:CGRectMake(20, 320, queuePcmWaveFileFromHTTPButton.frame.origin.y + queuePcmWaveFileFromHTTPButton.frame.size.height + 20, 20)];
-		slider.continuous = YES;
-		[slider addTarget:self action:@selector(sliderChanged) forControlEvents:UIControlEventValueChanged];
+        UILabel *progressLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 320, 80, 20)];
+        progressLabel.text = @"progress:";
+        progressLabel.textAlignment = NSTextAlignmentRight;
         
+		progressSlider = [[UISlider alloc] initWithFrame:CGRectMake(CGRectGetMaxX(progressLabel.frame)+5, 320, UIScreen.mainScreen.bounds.size.width - CGRectGetMaxX(progressLabel.frame) - 10, 20)];
+		progressSlider.continuous = YES;
+		[progressSlider addTarget:self action:@selector(progressSliderChanged) forControlEvents:UIControlEventValueChanged];
+        
+        UILabel *rateLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 350, 80, 20)];
+        rateLabel.text = @"rate:";
+        rateLabel.textAlignment = NSTextAlignmentRight;
+        
+        rateSlider = [[UISlider alloc] initWithFrame:CGRectMake(progressSlider.frame.origin.x, 350, progressSlider.frame.size.width, 20)];
+        rateSlider.continuous = YES;
+        [rateSlider addTarget:self action:@selector(rateSliderChanged) forControlEvents:UIControlEventValueChanged];
+        rateSlider.minimumValue = 0.5f;
+        rateSlider.maximumValue = 4.0f;
+        rateSlider.value = 1.0f;
         size = CGSizeMake(80, 50);
         
         repeatSwitch = [[UISwitch alloc] initWithFrame:CGRectMake(30, frame.size.height * 0.15 + 180, size.width, size.height)];
@@ -111,16 +128,16 @@
         
         [enableEqSwitch addTarget:self action:@selector(onEnableEqSwitch) forControlEvents:UIControlEventAllTouchEvents];
 
-        metadataLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, slider.frame.origin.y + slider.frame.size.height + 10, frame.size.width, 25)];
+        metadataLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, rateSlider.frame.origin.y + rateSlider.frame.size.height + 10, frame.size.width, 25)];
         
         metadataLabel.textAlignment = NSTextAlignmentCenter;
         metadataLabel.font = [UIFont boldSystemFontOfSize:17.0f];
         
-        label = [[UILabel alloc] initWithFrame:CGRectMake(0, slider.frame.origin.y + slider.frame.size.height + 40, frame.size.width, 25)];
+        label = [[UILabel alloc] initWithFrame:CGRectMake(0, progressSlider.frame.origin.y + progressSlider.frame.size.height + 40, frame.size.width, 25)];
 		
         label.textAlignment = NSTextAlignmentCenter;
         
-        statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, slider.frame.origin.y + slider.frame.size.height + label.frame.size.height + 50, frame.size.width, 50)];
+        statusLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, rateSlider.frame.origin.y + rateSlider.frame.size.height + label.frame.size.height + 50, frame.size.width, 50)];
 		
         statusLabel.textAlignment = NSTextAlignmentCenter;
 		
@@ -128,7 +145,10 @@
 		
 		meter.backgroundColor = [UIColor greenColor];
 		
-		[self addSubview:slider];
+        [self addSubview:progressLabel];
+		[self addSubview:progressSlider];
+        [self addSubview:rateLabel];
+        [self addSubview:rateSlider];
 		[self addSubview:playButton];
 		[self addSubview:playFromHTTPButton];
         [self addSubview:playFromIcecastButton];
@@ -156,30 +176,43 @@
     audioPlayer.equalizerEnabled = self->enableEqSwitch.on;
 }
 
--(void) sliderChanged
+-(void) progressSliderChanged
 {
 	if (!audioPlayer)
 	{
 		return;
 	}
 	
-	NSLog(@"Slider Changed: %f", slider.value);
+	NSLog(@"Slider Changed: %f", progressSlider.value);
 	
-	[audioPlayer seekToTime:slider.value];
+	[audioPlayer seekToTime:progressSlider.value];
+}
+
+-(void) rateSliderChanged
+{
+    if (!audioPlayer)
+    {
+        return;
+    }
+    
+    NSLog(@"Slider Changed: %.1f", rateSlider.value);
+    // 4 digits after the decimal point
+    Float32 rate = floor(10*rateSlider.value)/10;
+    [audioPlayer setRate:rate];
 }
 
 -(void) setupTimer
 {
-	timer = [NSTimer timerWithTimeInterval:0.001 target:self selector:@selector(tick) userInfo:nil repeats:YES];
-	
-	[[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
+//    timer = [NSTimer timerWithTimeInterval:0.001 target:self selector:@selector(tick) userInfo:nil repeats:YES];
+//
+//    [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSRunLoopCommonModes];
 }
 
 -(void) tick
 {
 	if (!audioPlayer)
 	{
-		slider.value = 0;
+		progressSlider.value = 0;
         label.text = @"";
         statusLabel.text = @"";
 		
@@ -188,9 +221,9 @@
 	
     if (audioPlayer.currentlyPlayingQueueItemId == nil)
     {
-        slider.value = 0;
-        slider.minimumValue = 0;
-        slider.maximumValue = 0;
+        progressSlider.value = 0;
+        progressSlider.minimumValue = 0;
+        progressSlider.maximumValue = 0;
         
         label.text = @"";
         
@@ -199,17 +232,17 @@
     
     if (audioPlayer.duration != 0)
     {
-        slider.minimumValue = 0;
-        slider.maximumValue = audioPlayer.duration;
-        slider.value = audioPlayer.progress;
+        progressSlider.minimumValue = 0;
+        progressSlider.maximumValue = audioPlayer.duration;
+        progressSlider.value = audioPlayer.progress;
         
         label.text = [NSString stringWithFormat:@"%@ - %@", [self formatTimeFromSeconds:audioPlayer.progress], [self formatTimeFromSeconds:audioPlayer.duration]];
     }
     else
     {
-        slider.value = 0;
-        slider.minimumValue = 0;
-        slider.maximumValue = 0;
+        progressSlider.value = 0;
+        progressSlider.minimumValue = 0;
+        progressSlider.maximumValue = 0;
         
         label.text =  [NSString stringWithFormat:@"Live stream %@", [self formatTimeFromSeconds:audioPlayer.progress]];
     }
@@ -356,6 +389,11 @@
 	[self updateControls];
 }
 
+- (void)audioPlayer:(STKAudioPlayer *)player notifyPlayProgress:(CGFloat)percent currentTime:(NSInteger)currentTime
+{
+    [self tick];
+}
+
 -(void) audioPlayer:(STKAudioPlayer*)audioPlayer didFinishBufferingSourceWithQueueItemId:(NSObject*)queueItemId
 {
 	[self updateControls];
@@ -388,7 +426,10 @@
 
 - (void)audioPlayer:(STKAudioPlayer *)audioPlayer didReadStreamMetadata:(NSDictionary *)dictionary
 {
-    metadataLabel.text = dictionary[@"StreamTitle"];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        metadataLabel.text = dictionary[@"StreamTitle"];
+    });
+
 }
 
 @end

@@ -50,9 +50,13 @@
 @private
 	NSTimer* timer;
     UILabel* label;
+    
+    UITextField* urlField;
+    
     UILabel* metadataLabel;
     UILabel* statusLabel;
-	UISlider* slider;
+	UISlider* progressSlider;
+    UISlider* rateSlider;
     UISwitch* enableEqSwitch;
     UISwitch* repeatSwitch;
 	UIButton* muteButton;

@@ -63,7 +63,7 @@ NS_ASSUME_NONNULL_BEGIN
 -(void) seekToOffset:(SInt64)offset;
 -(int) readIntoBuffer:(UInt8*)buffer withSize:(int)size;
 -(AudioFileTypeID) audioFileTypeHint;
-
+-(NSURL*) originalUrl;
 @end
 
 NS_ASSUME_NONNULL_END

@@ -59,6 +59,8 @@
     int            _metadataLength;
     
     NSURL* currentUrl;
+    NSURL* originalUrl;
+    NSURL* _cacheFileURL;
     STKAsyncURLProvider asyncUrlProvider;
     NSDictionary* httpHeaders;
     AudioFileTypeID audioFileTypeHint;
@@ -70,22 +72,23 @@
 
 @implementation STKHTTPDataSource
 
--(instancetype) initWithURL:(NSURL*)urlIn
+-(instancetype) initWithURL:(NSURL*)urlIn cacheFileURL:(NSURL *)cacheFileURL
 {
-    return [self initWithURLProvider:^NSURL* { return urlIn; }];
+    return [self initWithURLProvider:^NSURL* { return urlIn; } cacheFileURL:cacheFileURL];
 }
 
--(instancetype) initWithURL:(NSURL *)urlIn httpRequestHeaders:(NSDictionary *)httpRequestHeaders
+-(instancetype) initWithURL:(NSURL *)urlIn cacheFileURL:(NSURL *)cacheFileURL httpRequestHeaders:(NSDictionary *)httpRequestHeaders
 {
-    self = [self initWithURLProvider:^NSURL* { return urlIn; }];
+    self = [self initWithURLProvider:^NSURL* { return urlIn; } cacheFileURL:cacheFileURL];
     self->requestHeaders = httpRequestHeaders;
+    self->originalUrl = urlIn;
     return self;
 }
 
--(instancetype) initWithURLProvider:(STKURLProvider)urlProviderIn
+-(instancetype) initWithURLProvider:(STKURLProvider)urlProviderIn cacheFileURL:(NSURL *)cacheFileURL
 {
 	urlProviderIn = [urlProviderIn copy];
-    
+    _cacheFileURL = cacheFileURL;
     return [self initWithAsyncURLProvider:^(STKHTTPDataSource* dataSource, BOOL forSeek, STKURLBlock block)
     {
         block(urlProviderIn());
@@ -99,7 +102,6 @@
         seekStart = 0;
         relativePosition = 0;
         fileLength = -1;
-        
         self->asyncUrlProvider = [asyncUrlProviderIn copy];
         
         audioFileTypeHint = [STKLocalFileDataSource audioFileTypeHintFromFileExtension:self->currentUrl.pathExtension];
@@ -116,6 +118,11 @@
 -(NSURL*) url
 {
     return self->currentUrl;
+}
+
+- (NSURL *)originalUrl
+{
+    return self->originalUrl ? : self->currentUrl;
 }
 
 +(AudioFileTypeID) audioFileTypeHintFromMimeType:(NSString*)mimeType

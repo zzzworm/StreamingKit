@@ -39,6 +39,7 @@
 #import <pthread.h>
 #import "STKDataSource.h"
 #import <AudioToolbox/AudioToolbox.h>
+#import "STKDataSourceWrapper.h"
 
 #if TARGET_OS_IPHONE
 #include "UIKit/UIApplication.h"
@@ -102,10 +103,15 @@ typedef struct
     Float32 gracePeriodAfterSeekInSeconds;
     /// Number of seconds of decompressed audio required before playback resumes after a buffer underrun (Default is 5 seconds. Must be larger than bufferSizeinSeconds)
     Float32 secondsRequiredToStartPlayingAfterBufferUnderun;
+    
+    NSString *cachePath;
 }
 STKAudioPlayerOptions;
 
 #define STK_DISABLE_BUFFER (0xffffffff)
+
+
+#define STK_PLAYER_AVAIABLE (1)
 
 typedef void(^STKFrameFilter)(UInt32 channelsPerFrame, UInt32 bytesPerFrame, UInt32 frameCount, void* frames);
 
@@ -138,6 +144,11 @@ typedef void(^STKFrameFilter)(UInt32 channelsPerFrame, UInt32 bytesPerFrame, UIn
 /// Raised when datasource read stream metadata
 -(void) audioPlayer:(STKAudioPlayer*)audioPlayer didReadStreamMetadata:(NSDictionary*)dictionary;
 
+
+- (void)audioPlayer:(STKAudioPlayer *)player notifyPlayProgress:(CGFloat)percent currentTime:(NSInteger)currentTime;
+
+- (void)audioPlayer:(STKAudioPlayer *)player notifyCacheProgress:(CGFloat)percent;
+
 @end
 
 @interface STKAudioPlayer : NSObject<STKDataSourceDelegate>
@@ -147,6 +158,10 @@ typedef void(^STKFrameFilter)(UInt32 channelsPerFrame, UInt32 bytesPerFrame, UIn
 @property (readwrite) Float32 volume;
 /// Gets or sets the player muted state
 @property (readwrite) BOOL muted;
+
+/// Gets or sets the player muted state
+@property (readwrite) Float32 rate;
+
 /// Gets the current item duration in seconds
 @property (readonly) double duration;
 /// Gets the current item progress in seconds
@@ -172,11 +187,21 @@ typedef void(^STKFrameFilter)(UInt32 channelsPerFrame, UInt32 bytesPerFrame, UIn
 /// Gets and sets the delegate used for receiving events from the STKAudioPlayer
 @property (readwrite, weak) id<STKAudioPlayerDelegate> delegate;
 
+
+- (BOOL)isPlaying;
+- (BOOL)isBuffering;
+- (BOOL)isPaused;
+
+- (NSURL *)url;
+
 /// Creates a datasource from a given URL.
 /// URLs with FILE schemes will return an STKLocalFileDataSource.
 /// URLs with HTTP schemes will return an STKHTTPDataSource wrapped within an STKAutoRecoveringHTTPDataSource.
 /// URLs with unrecognised schemes will return nil.
 +(STKDataSource*) dataSourceFromURL:(NSURL*)url;
+
+
++(STKDataSourceWrapper*) httpDataSourceFromURL:(NSURL*)url cacheFileURL:(NSURL *)cacheFileURL;
 
 /// Initializes a new STKAudioPlayer with the default options
 -(instancetype) init;

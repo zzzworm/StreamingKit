@@ -29,7 +29,7 @@
 	[playFromHTTPButton setAction:@selector(playFromHTTP)];
 	
 	slider = [[NSSlider alloc] initWithFrame:CGRectMake(10, 140, frame.size.width - 20, 20)];
-	[slider setAction:@selector(sliderChanged:)];
+	[slider setAction:@selector(volumSliderChanged:)];
 	
 	meter = [[NSView alloc] initWithFrame:CGRectMake(10, 200, 0, 20)];
 	[meter setLayer:[CALayer new]];
@@ -40,7 +40,7 @@
 	[[self.window contentView] addSubview:playFromHTTPButton];
 	[[self.window contentView] addSubview:meter];
 	
-	audioPlayer = [[STKAudioPlayer alloc] initWithOptions:(STKAudioPlayerOptions){ .enableVolumeMixer = NO, .equalizerBandFrequencies = {50, 100, 200, 400, 800, 1600, 2600, 16000} } ];
+	audioPlayer = [[STKAudioPlayer alloc] initWithOptions:(STKAudioPlayerOptions){ .enableVolumeMixer = NO, .equalizerBandFrequencies = {50, 100, 200, 400, 800, 1600, 2600, 16000}, .readBufferSize = 32*1024 } ];
 	audioPlayer.delegate = self;
 	audioPlayer.meteringEnabled = YES;
 	audioPlayer.volume = 0.1;

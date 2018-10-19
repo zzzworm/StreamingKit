@@ -385,6 +385,11 @@ static void PopulateOptionsWithDefault(STKAutoRecoveringHTTPDataSourceOptions* o
     }
 }
 
+- (NSURL *)originalUrl
+{
+    return self.innerDataSource.originalUrl;
+}
+
 -(NSString*) description
 {
     return [NSString stringWithFormat:@"HTTP data source with file length: %lld and position: %lld", self.length, self.position];

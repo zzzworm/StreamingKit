@@ -56,8 +56,8 @@
 #define STK_LOWPASSFILTERTIMESLICE (0.0005)
 
 #define STK_DEFAULT_PCM_BUFFER_SIZE_IN_SECONDS (10)
-#define STK_DEFAULT_SECONDS_REQUIRED_TO_START_PLAYING (1)
-#define STK_DEFAULT_SECONDS_REQUIRED_TO_START_PLAYING_AFTER_BUFFER_UNDERRUN (7.5)
+#define STK_DEFAULT_SECONDS_REQUIRED_TO_START_PLAYING (0.5)
+#define STK_DEFAULT_SECONDS_REQUIRED_TO_START_PLAYING_AFTER_BUFFER_UNDERRUN (2.5)
 #define STK_MAX_COMPRESSED_PACKETS_FOR_BITRATE_CALCULATION (4096)
 #define STK_DEFAULT_READ_BUFFER_SIZE (64 * 1024)
 #define STK_DEFAULT_PACKET_BUFFER_SIZE (2048)
@@ -201,9 +201,14 @@ static UInt32 maxFramesPerSlice = 4096;
 
 static AudioComponentDescription mixerDescription;
 static AudioComponentDescription nbandUnitDescription;
+static AudioComponentDescription convertUnitDescription;
+static AudioComponentDescription iPodUnitDescription;
 static AudioComponentDescription outputUnitDescription;
 static AudioComponentDescription convertUnitDescription;
 static AudioStreamBasicDescription canonicalAudioStreamBasicDescription;
+
+static AudioStreamBasicDescription iPodTimeCanonicalAudioStreamBasicDescription;
+
 static AudioStreamBasicDescription recordAudioStreamBasicDescription;
 
 @interface STKAudioPlayer()
@@ -215,6 +220,7 @@ static AudioStreamBasicDescription recordAudioStreamBasicDescription;
     STKAudioPlayerInternalState internalState;
 	
 	Float32 volume;
+    Float32 rate;
 	Float32 peakPowerDb[2];
 	Float32 averagePowerDb[2];
 	
@@ -227,6 +233,8 @@ static AudioStreamBasicDescription recordAudioStreamBasicDescription;
 
 	AUGraph audioGraph;
     AUNode eqNode;
+    AUNode convertNode;
+    AUNode iPodTimeNode;
 	AUNode mixerNode;
     AUNode outputNode;
 	
@@ -236,6 +244,8 @@ static AudioStreamBasicDescription recordAudioStreamBasicDescription;
 	AUNode mixerOutputNode;
 	
     AudioComponentInstance eqUnit;
+    AudioComponentInstance convertUnit;
+    AudioComponentInstance iPodTimeUnit;
 	AudioComponentInstance mixerUnit;
 	AudioComponentInstance outputUnit;
 		
@@ -355,6 +365,18 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
         .mBytesPerPacket = (bytesPerSample * 2)
     };
     
+    iPodTimeCanonicalAudioStreamBasicDescription = (AudioStreamBasicDescription)
+    {
+        .mSampleRate = 44100.00,
+        .mFormatID = kAudioFormatLinearPCM,
+        .mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagsNativeEndian | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
+        .mFramesPerPacket = 1,
+        .mChannelsPerFrame = 2,
+        .mBytesPerFrame = sizeof(Float32) /*channelsPerFrame*/,
+        .mBitsPerChannel = 8 * sizeof(Float32),
+        .mBytesPerPacket = sizeof(Float32)
+    };
+    
 	outputUnitDescription = (AudioComponentDescription)
 	{
 		.componentType = kAudioUnitType_Output,
@@ -383,6 +405,20 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 		.componentSubType = kAudioUnitSubType_NBandEQ,
 		.componentManufacturer=kAudioUnitManufacturer_Apple
 	};
+    
+    convertUnitDescription = (AudioComponentDescription)
+    {
+        .componentType = kAudioUnitType_FormatConverter,
+        .componentSubType = kAudioUnitSubType_AUConverter,
+        .componentManufacturer=kAudioUnitManufacturer_Apple
+    };
+    
+    iPodUnitDescription = (AudioComponentDescription)
+    {
+        .componentType = kAudioUnitType_FormatConverter,
+        .componentSubType = kAudioUnitSubType_AUiPodTimeOther,
+        .componentManufacturer=kAudioUnitManufacturer_Apple
+    };
 }
 -(STKAudioPlayerOptions) options
 {
@@ -472,7 +508,9 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
         
         dispatch_async(dispatch_get_main_queue(), ^
         {
-            [self.delegate audioPlayer:self stateChanged:self.state previousState:previousState];
+            if (self.delegate && [self.delegate respondsToSelector:@selector(audioPlayer:stateChanged:previousState:)]) {
+                [self.delegate audioPlayer:self stateChanged:self.state previousState:previousState];
+            }
         });
     }
     else
@@ -516,6 +554,7 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
         options = optionsIn;
 		
 		self->volume = 1.0;
+        self->rate = 1.0;
         self->equalizerEnabled = optionsIn.equalizerBandFrequencies[0] != 0;
 
         PopulateOptionsWithDefault(&options);
@@ -674,11 +713,26 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
     }
     else if ([url.scheme caseInsensitiveCompare:@"http"] == NSOrderedSame || [url.scheme caseInsensitiveCompare:@"https"] == NSOrderedSame)
     {
-        retval = [[STKAutoRecoveringHTTPDataSource alloc] initWithHTTPDataSource:[[STKHTTPDataSource alloc] initWithURL:url]];
+        NSURL *cacheFilePath = nil;
+        retval = [[STKAutoRecoveringHTTPDataSource alloc] initWithHTTPDataSource:[[STKHTTPDataSource alloc] initWithURL:url cacheFileURL:cacheFilePath]];
     }
     
     return retval;
 }
+
++(STKAutoRecoveringHTTPDataSource*) httpDataSourceFromURL:(NSURL*)url cacheFileURL:(NSURL *)cacheFileURL
+{
+    STKDataSource* retval = nil;
+    
+    if ([url.scheme caseInsensitiveCompare:@"http"] == NSOrderedSame || [url.scheme caseInsensitiveCompare:@"https"] == NSOrderedSame)
+    {
+        NSURL *cacheFilePath = nil;
+        retval = [[STKAutoRecoveringHTTPDataSource alloc] initWithHTTPDataSource:[[STKHTTPDataSource alloc] initWithURL:url cacheFileURL:cacheFileURL]];
+    }
+    
+    return retval;
+}
+
 
 -(void) clearQueue
 {
@@ -2155,8 +2209,18 @@ static BOOL GetHardwareCodecClassDesc(UInt32 formatId, AudioClassDescription* cl
 	
 	CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(outputUnit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, kInputBus, &flag, sizeof(flag)));
 #endif
-    
-    CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(outputUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &canonicalAudioStreamBasicDescription, sizeof(canonicalAudioStreamBasicDescription)));
+    [self configureOutputUnit];
+}
+
+- (void)configureOutputUnit
+{
+    OSStatus status;
+    if(convertNode){
+        CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(outputUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &iPodTimeCanonicalAudioStreamBasicDescription, sizeof(iPodTimeCanonicalAudioStreamBasicDescription)));
+    }
+    else{
+        CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(outputUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, kOutputBus, &canonicalAudioStreamBasicDescription, sizeof(canonicalAudioStreamBasicDescription)));
+    }
 }
 
 -(void) createMixerUnit
@@ -2214,6 +2278,67 @@ static BOOL GetHardwareCodecClassDesc(UInt32 formatId, AudioClassDescription* cl
 	{
 		CHECK_STATUS_AND_RETURN(AudioUnitSetParameter(eqUnit, kAUNBandEQParam_BypassBand + i, kAudioUnitScope_Global, 0, (AudioUnitParameterValue)0, 0));
 	}
+#endif
+}
+
+-(void) createiPodTimeUnit
+{
+
+#if TARGET_OS_MAC && MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_9
+    return;
+#else
+    OSStatus status;
+    
+    CHECK_STATUS_AND_RETURN(AUGraphAddNode(audioGraph, &iPodUnitDescription, &iPodTimeNode));
+    CHECK_STATUS_AND_RETURN(AUGraphNodeInfo(audioGraph, iPodTimeNode, NULL, &iPodTimeUnit));
+    CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(iPodTimeUnit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxFramesPerSlice, sizeof(maxFramesPerSlice)));
+    
+    CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(iPodTimeUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &iPodTimeCanonicalAudioStreamBasicDescription, sizeof(iPodTimeCanonicalAudioStreamBasicDescription)));
+    CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(iPodTimeUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &iPodTimeCanonicalAudioStreamBasicDescription, sizeof(iPodTimeCanonicalAudioStreamBasicDescription)));
+#endif
+}
+
+
+-(void) destoryiPodTimeUnit
+{
+    
+#if TARGET_OS_MAC && MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_9
+    return;
+#else
+    OSStatus status;
+    
+    CHECK_STATUS_AND_RETURN(AUGraphRemoveNode(audioGraph, iPodTimeNode));
+    iPodTimeNode = 0;
+    iPodTimeUnit = NULL;
+#endif
+}
+
+-(void) createConvertUnit
+{
+#if TARGET_OS_MAC && MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_9
+    return;
+#else
+    OSStatus status;
+    
+    CHECK_STATUS_AND_RETURN(AUGraphAddNode(audioGraph, &convertUnitDescription, &convertNode));
+    CHECK_STATUS_AND_RETURN(AUGraphNodeInfo(audioGraph, convertNode, NULL, &convertUnit));
+    CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(convertUnit, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxFramesPerSlice, sizeof(maxFramesPerSlice)));
+    CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(iPodTimeUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &canonicalAudioStreamBasicDescription, sizeof(canonicalAudioStreamBasicDescription)));
+    CHECK_STATUS_AND_RETURN(AudioUnitSetProperty(iPodTimeUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &iPodTimeCanonicalAudioStreamBasicDescription, sizeof(iPodTimeCanonicalAudioStreamBasicDescription)));
+#endif
+}
+
+-(void) destoryConvertUnit
+{
+    
+#if TARGET_OS_MAC && MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_9
+    return;
+#else
+    OSStatus status;
+    
+    CHECK_STATUS_AND_RETURN(AUGraphRemoveNode(audioGraph, convertNode));
+    convertNode = 0;
+    convertUnit = NULL;
 #endif
 }
 
@@ -2365,7 +2490,17 @@ static BOOL GetHardwareCodecClassDesc(UInt32 formatId, AudioClassDescription* cl
         [nodes addObject:@(mixerNode)];
         [units addObject:[NSValue valueWithPointer:mixerUnit]];
     }
-	
+    if (convertNode)
+    {
+        [nodes addObject:@(convertNode)];
+        [units addObject:[NSValue valueWithPointer:convertUnit]];
+    }
+    if (iPodTimeNode)
+    {
+        [nodes addObject:@(iPodTimeNode)];
+        [units addObject:[NSValue valueWithPointer:iPodTimeUnit]];
+    }
+    
     if (outputNode)
     {
         [nodes addObject:@(outputNode)];
@@ -3063,7 +3198,13 @@ static OSStatus OutputRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*
     extraFramesPlayedNotAssigned = totalFramesCopied - framesPlayedForCurrent;
     
     BOOL lastFramePlayed = entry->framesPlayed == entry->lastFrameQueued;
-
+    if (audioPlayer.delegate && [audioPlayer.delegate respondsToSelector:@selector(audioPlayer:notifyPlayProgress:currentTime:)]) {
+        double currentTime = entry->seekTime + (entry->framesPlayed / canonicalAudioStreamBasicDescription.mSampleRate);
+        double progress = currentTime/[entry duration];
+        dispatch_async(dispatch_get_main_queue(), ^{
+           [audioPlayer.delegate audioPlayer:audioPlayer notifyPlayProgress:progress currentTime:currentTime];
+        });
+    }
     OSSpinLockUnlock(&entry->spinLock);
     
     if (signal || lastFramePlayed)
@@ -3096,7 +3237,13 @@ static OSStatus OutputRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*
                     }
                     
                     newEntry->framesPlayed += framesPlayedForCurrent;
-                    
+                    if (audioPlayer.delegate && [audioPlayer.delegate respondsToSelector:@selector(audioPlayer:notifyPlayProgress:currentTime:)]) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            double progress = entry->framesPlayed / entry->lastFrameQueued;
+                            double retval = entry->seekTime + (entry->framesPlayed / canonicalAudioStreamBasicDescription.mSampleRate);
+                            [audioPlayer.delegate audioPlayer:audioPlayer notifyPlayProgress:progress currentTime:retval];
+                        });
+                    }
                     if (newEntry->framesPlayed == newEntry->lastFrameQueued)
                     {
                         OSSpinLockUnlock(&newEntry->spinLock);
@@ -3433,7 +3580,7 @@ static OSStatus OutputRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*
 
 #pragma mark Volume
 
--(void) setVolume:(Float32)value;
+-(void) setVolume:(Float32)value
 {
 	self->volume = value;
 	
@@ -3457,6 +3604,70 @@ static OSStatus OutputRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*
 -(Float32) volume
 {
 	return self->volume;
+}
+
+#pragma mark Rate
+
+-(void) setRate:(Float32)rate
+{
+    if(self->rate == rate)
+        return;
+    if (rate != 1.0f && self->rate == 1.0f) {
+        [self createConvertUnit];
+        [self createiPodTimeUnit];
+        [self configureOutputUnit];
+        float time = self.progress;
+        [self connectGraph];
+        AUGraphUpdate(audioGraph,NULL);
+        [self seekToTime:time];
+    }
+    else if(rate == 1.0f && self->rate != 1.0f){
+        
+        AUGraphClearConnections(audioGraph);
+        [self destoryConvertUnit];
+        [self destoryiPodTimeUnit];
+        [self configureOutputUnit];
+        float time = self.progress;
+        [self connectGraph];
+        AUGraphUpdate(audioGraph,NULL);
+        
+        [self seekToTime:time];
+    }
+    self->rate = rate;
+    
+    if (self->iPodTimeUnit)
+    {
+        OSStatus ret = AudioUnitSetParameter(self->iPodTimeUnit, 0, kAudioUnitScope_Global, kVarispeedParam_PlaybackRate, self->rate, 0);
+        if (ret != noErr) {
+            NSLog(@"Error setting parameter(%.1f)", rate);
+        }
+    }
+
+}
+
+-(Float32) rate
+{
+    return self->rate;
+}
+
+- (NSURL *)url
+{
+    return currentlyPlayingEntry.dataSource.originalUrl;
+}
+
+- (BOOL)isPlaying
+{
+    return self.state == STKAudioPlayerStatePlaying;
+}
+
+- (BOOL)isBuffering
+{
+    return self.state == STKAudioPlayerStateBuffering;
+}
+
+- (BOOL)isPaused
+{
+    return self.state == STKAudioPlayerStatePaused;
 }
 
 -(BOOL) equalizerEnabled

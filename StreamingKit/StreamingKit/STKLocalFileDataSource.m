@@ -47,6 +47,11 @@
 @implementation STKLocalFileDataSource
 @synthesize filePath;
 
+- (NSURL *)originalUrl
+{
+    return [NSURL fileURLWithPath:self.filePath];
+}
+
 -(instancetype) initWithFilePath:(NSString*)filePathIn
 {
     if (self = [super init])
